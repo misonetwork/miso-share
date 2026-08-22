@@ -8,7 +8,8 @@
 /// 1. Create a package with a `share` module containing a `Share` type
 /// 2. Create a currency with `sui::coin_registry::new_currency`
 /// 3. Delete the metadata cap via `finalize_and_delete_metadata_cap`
-/// 4. Call `share::share::initialize` with the currency and treasury cap
+/// 4. Call `miso_share::share::initialize` with the currency and its canonical
+///    treasury cap (the one created together with the currency)
 /// 5. Distribute the returned balance to shareholders
 module miso_share::share;
 
@@ -18,6 +19,7 @@ use sui::bcs;
 use sui::coin::TreasuryCap;
 use sui::coin_registry::Currency;
 use sui::event::emit;
+use sui::object;
 
 // === Constants ===
 
@@ -43,6 +45,8 @@ const EInvalidDecimals: u64 = 3;
 /// equity, so a regulated share currency — whose issuer retains deny-list and
 /// global-pause authority over holders forever — is rejected.
 const ERegulatedCurrency: u64 = 4;
+/// Treasury cap is not the canonical cap recorded on the currency at creation.
+const ETreasuryCapMismatch: u64 = 5;
 
 // === Events ===
 
@@ -69,6 +73,21 @@ public fun initialize<Share>(
     // Assert the currency's MetadataCap has been deleted,
     // which prevents currency metadata from being modified after initialization.
     assert!(currency.is_metadata_cap_deleted(), EMetadataCapNotDeleted);
+    // Assert the presented treasury cap is the canonical cap recorded on the
+    // currency at creation. `make_supply_fixed` fixes the supply with whatever
+    // cap it is handed without checking, so bind it here: the supply is fixed
+    // with the registry's own cap. This also rejects legacy-migrated
+    // currencies as created (`treasury_cap_id: none`). A migrated currency
+    // could only pass if its cap ID were later filled via `set_treasury_cap_id`
+    // with a real `TreasuryCap<T>` — and no legacy `TreasuryCap` of a share
+    // type can ever exist (every legacy constructor is OTW-gated, and a
+    // `::share::Share` type is never a one-time witness), so after this check
+    // the `RegulatedState::Unknown` fail-open gap in `is_regulated()` below is
+    // unreachable for share types.
+    assert!(
+        currency.treasury_cap_id() == option::some(object::id(&treasury_cap)),
+        ETreasuryCapMismatch,
+    );
     // Assert the currency is not regulated. A regulated currency has a live
     // `DenyCapV2` whose holder can deny-list or globally pause holders forever;
     // shares are meant to be freeze-proof fixed-supply equity, so making the

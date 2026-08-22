@@ -8,6 +8,7 @@
 #[test_only]
 module miso_share::share_tests;
 
+use miso_share::legacyotw;
 use miso_share::notshare;
 use miso_share::share::{Self, Share, Shares, ShareInitializedEvent};
 use std::unit_test::{assert_eq, destroy};
@@ -21,6 +22,7 @@ const EMetadataCapNotDeleted: u64 = 1;
 const EInvalidShareType: u64 = 2;
 const EInvalidDecimals: u64 = 3;
 const ERegulatedCurrency: u64 = 4;
+const ETreasuryCapMismatch: u64 = 5;
 
 #[test]
 fun initialize_mints_fixed_supply() {
@@ -105,6 +107,66 @@ fun initialize_rejects_existing_supply() {
     destroy(balance);
     destroy(currency);
     abort
+}
+
+#[test, expected_failure(abort_code = ETreasuryCapMismatch, location = share)]
+fun initialize_rejects_non_canonical_treasury_cap() {
+    let ctx = &mut tx_context::dummy();
+    let (mut currency, treasury_cap, metadata_cap) =
+        share::new_share_currency_for_testing(6, ctx);
+    currency.delete_metadata_cap(metadata_cap);
+
+    // A second, forged cap for the same type: a valid `TreasuryCap<Share>`,
+    // but not the cap the registry recorded at currency creation.
+    let forged_cap = sui::coin::create_treasury_cap_for_testing<Share>(ctx);
+    let balance = share::initialize<Share>(&mut currency, forged_cap);
+
+    destroy(treasury_cap);
+    destroy(balance);
+    destroy(currency);
+    abort
+}
+
+/// Proves the framework property the canonical-cap assert relies on to reject
+/// legacy-migrated currencies: as migrated, they carry NO recorded treasury
+/// cap ID. (`set_treasury_cap_id` can fill it later — but only with a real
+/// `TreasuryCap<T>`, and no legacy cap of a share type can ever exist, since
+/// every legacy constructor is OTW-gated and `::share::Share` is never a
+/// one-time witness.) Also documents the fail-open gap being closed: such a
+/// currency's regulated state is `Unknown`, which `is_regulated()` reads as
+/// unregulated.
+#[test]
+#[allow(deprecated_usage)]
+fun migrated_legacy_currency_carries_no_recorded_cap() {
+    let ctx = &mut tx_context::dummy();
+    let mut registry = sui::coin_registry::create_coin_data_registry_for_testing(ctx);
+    let (treasury_cap, metadata) = sui::coin::create_currency(
+        legacyotw::new_for_testing(),
+        6,
+        b"LEG",
+        b"Legacy",
+        b"",
+        option::none(),
+        ctx,
+    );
+    let currency = sui::coin_registry::migrate_legacy_metadata_for_testing(
+        &mut registry,
+        &metadata,
+        ctx,
+    );
+
+    // The fail-open gap: a migrated currency reads as unregulated...
+    assert!(!currency.is_regulated());
+    // ...but as migrated carries no recorded treasury cap, so `initialize`'s
+    // canonical-cap assert rejects it (the ID could only be filled later via
+    // `set_treasury_cap_id` with a real `TreasuryCap<T>` — impossible for
+    // share types, whose legacy caps can never exist).
+    assert!(currency.treasury_cap_id().is_none());
+
+    destroy(treasury_cap);
+    destroy(metadata);
+    destroy(currency);
+    destroy(registry);
 }
 
 // === Type-suffix gate ===

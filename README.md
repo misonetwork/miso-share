@@ -9,6 +9,8 @@
 
 - The type parameter must be `<address>::share::Share`
 - The currency's `MetadataCap` must already be deleted (metadata is frozen)
+- The treasury cap must be the canonical cap recorded on the currency at
+  creation — this also rejects legacy-migrated currencies
 - Decimals must equal 6
 - Existing supply must be zero
 - The currency must **not** be regulated — a regulated currency carries a
@@ -21,25 +23,20 @@ Pin to a full commit SHA (never a branch):
 
 ```toml
 [dependencies]
-miso_share = { git = "https://github.com/misonetwork/miso-share.git", rev = "<commit-sha>" }
+miso_share = { git = "https://github.com/misonetwork/share.git", rev = "<commit-sha>" }
 ```
 
 ## Usage
 
-1. Create a package with a `share` module containing a `Share` one-time witness type.
+1. Create a package with a `share` module containing a `Share` type (a plain
+   `key` object, e.g. `public struct Share has key { id: UID }` — NOT a
+   one-time witness; the name must be exactly `Share` in a module named
+   `share`).
 2. Create a currency with `sui::coin_registry::new_currency`.
 3. Set any desired metadata (name, symbol, icon, description), then call `finalize_and_delete_metadata_cap` to freeze it.
-4. Call `miso_share::share::initialize` with the currency and treasury cap.
+4. Call `miso_share::share::initialize` with the currency and its canonical
+   treasury cap (the one created together with the currency).
 5. Distribute the returned `Balance<Share>` to shareholders.
-
-### Icon URL Helper
-
-A convenience function is provided for constructing [Walrus](https://docs.walrus.site/)-hosted icon URLs:
-
-```move
-let icon_url = miso_share::share::construct_icon_url(blob_id);
-// => "walrus://<base64url-encoded blob ID>"
-```
 
 ## Dependencies
 
